@@ -1,38 +1,60 @@
 # hyprdictate
 
-Streaming dictation into the focused text field on Wayland.
+Streaming dictation into the focused text field on Wayland: words appear as you speak, transcribed locally on your GPU.
 
 This project is written and maintained with AI assistance.
 
-It runs as the seat's input method (`zwp_input_method_v2`) and streams the
-microphone into a streaming speech model ([transcribe.cpp](https://github.com/handy-computer/transcribe.cpp),
-on the GPU through Vulkan). Words the model won't revise are committed into the
-field as they arrive; the words it may still revise sit in the field's preedit
-until they settle. Nothing fakes key presses.
+# Features
+ - Types into any text field through the Wayland input-method protocol, without faking key presses
+ - Streams: settled words are committed as you speak, words still being decided show as a preedit
+ - Local speech recognition on the GPU through Vulkan, with [transcribe.cpp](https://github.com/handy-computer/transcribe.cpp)
+ - The microphone is only open while dictating
 
-```sh
-hyprdictate --model nemotron-3.5-asr-streaming-0.6b-Q8_0.gguf --language en-US --lookahead 6
-hyprdictate --toggle # start / stop, e.g. from a Hyprland bind
-```
+# Usage
 
-The daemon keeps the model loaded and opens the microphone only while
-dictating. `--toggle` talks to it over a
-[hyprwire](https://github.com/hyprwm/hyprwire) socket at
-`$XDG_RUNTIME_DIR/hyprdictate.sock`.
-
-Models: any transcribe.cpp GGUF that supports streaming, e.g.
+Download a streaming transcribe.cpp model, e.g. `nemotron-3.5-asr-streaming-0.6b-Q8_0.gguf` from
 [Nemotron 3.5 ASR Streaming](https://huggingface.co/handy-computer/nemotron-3.5-asr-streaming-0.6b-gguf).
 
-Limits: only one input method can run per seat, and the app must support
-`text_input_v3` (GTK, foot; Chromium with `--enable-wayland-ime`).
+Start the daemon with your session and bind a key to toggle dictation, e.g. in Hyprland:
 
-## Building
+```ini
+exec-once = hyprdictate --model ~/models/nemotron-3.5-asr-streaming-0.6b-Q8_0.gguf --language en-US
+bind = SUPER, D, exec, hyprdictate --toggle
+```
 
-Dependencies: wayland, pipewire, [hyprwire](https://github.com/hyprwm/hyprwire),
-[hyprutils](https://github.com/hyprwm/hyprutils),
-[hyprwayland-scanner](https://github.com/hyprwm/hyprwayland-scanner), and
-[transcribe.cpp](https://github.com/handy-computer/transcribe.cpp) built with
-`-DTRANSCRIBE_VULKAN=ON -DTRANSCRIBE_BUILD_SHARED=ON` and installed.
+`hyprdictate --help` lists the options.
+
+Requirements:
+ - A compositor with `zwp_input_method_v2` (Hyprland, sway, river, labwc; not GNOME or KDE), and no other input method running
+ - Apps with `text_input_v3` (GTK, foot; Chromium with `--enable-wayland-ime`)
+ - PipeWire
+
+# Installation
+
+## Nix
+
+`default.nix` and the flake export `overlays.default` and `maidModules.default`, a
+[nix-maid](https://github.com/viperML/nix-maid) module that runs the daemon in the graphical session:
+
+```nix
+maid.sharedModules = [ (import hyprdictate).maidModules.default ];
+# per user:
+hyprdictate = {
+  enable = true;
+  model = ./nemotron-3.5-asr-streaming-0.6b-Q8_0.gguf;
+  # also: package, language, lookahead
+};
+```
+
+## Manual
+
+### Dependencies
+ - wayland, wayland-scanner
+ - pipewire
+ - hyprutils, hyprwire, hyprwayland-scanner
+ - [transcribe.cpp](https://github.com/handy-computer/transcribe.cpp), built with `-DTRANSCRIBE_VULKAN=ON -DTRANSCRIBE_BUILD_SHARED=ON` and installed
+
+### Building
 
 Building is done via CMake:
 
@@ -45,20 +67,4 @@ Install with:
 
 ```sh
 cmake --install ./build
-```
-
-## Nix
-
-`nix build` builds it with transcribe.cpp. `default.nix` (also the flake's outputs) exports `overlays.default` and
-`maidModules.default`, a [nix-maid](https://github.com/viperML/nix-maid)
-module that runs the daemon in the graphical session:
-
-```nix
-maid.sharedModules = [ (import hyprdictate).maidModules.default ];
-# per user:
-hyprdictate = {
-  enable = true;
-  model = ./nemotron-3.5-asr-streaming-0.6b-Q8_0.gguf; # required
-  # also: package, language, lookahead
-};
 ```

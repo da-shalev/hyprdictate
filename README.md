@@ -2,6 +2,8 @@
 
 Streaming dictation into the focused text field on Wayland.
 
+This project is written and maintained with AI assistance.
+
 It runs as the seat's input method (`zwp_input_method_v2`) and streams the
 microphone into a streaming speech model ([transcribe.cpp](https://github.com/handy-computer/transcribe.cpp),
 on the GPU through Vulkan). Words the model won't revise are committed into the

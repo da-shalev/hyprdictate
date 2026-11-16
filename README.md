@@ -2,6 +2,8 @@
 
 Streaming dictation into the focused text field on Wayland: words appear as you speak, transcribed locally on your GPU.
 
+Works on compositors with the `zwp_input_method_v2` protocol: Hyprland and wlroots-based ones such as sway, river and labwc. **It does not work on GNOME or KDE**, which don't support that protocol.
+
 This project is written and maintained with AI assistance.
 
 # Features

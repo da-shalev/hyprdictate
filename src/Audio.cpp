@@ -46,7 +46,7 @@ bool CAudio::start() {
     spa_audio_info_raw     info    = {.format = SPA_AUDIO_FORMAT_F32, .rate = SAMPLE_RATE, .channels = 1};
     const spa_pod*         params[] = {spa_format_audio_raw_build(&builder, SPA_PARAM_EnumFormat, &info)};
 
-    const auto             flags = static_cast<pw_stream_flags>(PW_STREAM_FLAG_AUTOCONNECT | PW_STREAM_FLAG_MAP_BUFFERS | PW_STREAM_FLAG_RT_PROCESS);
+    const auto             flags = static_cast<pw_stream_flags>(PW_STREAM_FLAG_AUTOCONNECT | PW_STREAM_FLAG_MAP_BUFFERS);
     const int              res   = m_stream ? pw_stream_connect(m_stream, PW_DIRECTION_INPUT, PW_ID_ANY, flags, params, 1) : -1;
 
     if (res < 0) {

@@ -8,15 +8,13 @@
 
 #include <algorithm>
 #include <cerrno>
-#include <csignal>
-#include <format>
 #include <cstdlib>
 #include <filesystem>
+#include <format>
 #include <poll.h>
 #include <print>
 #include <string>
 #include <string_view>
-#include <sys/signalfd.h>
 #include <vector>
 
 using Hyprutils::Memory::CSharedPointer;
@@ -26,16 +24,15 @@ constexpr uint32_t PROTOCOL_VERSION = 1;
 
 constexpr const char* USAGE = R"(usage:
   hyprdictate daemon --model <file.gguf> [--language <code>] [--lookahead <frames>]
-  hyprdictate start | stop | toggle
+  hyprdictate toggle
 
-daemon      Run the input method and keep the speech model loaded.
-              --model      a streaming transcribe.cpp GGUF
-              --language   language code the model expects, e.g. en-US
-              --lookahead  encoder lookahead in 80 ms frames (cache-aware
-                           models: 0, 3, 6 or 13); lower is faster, higher
-                           more accurate
-start/stop  Start or stop dictating into the focused text field.
-toggle      Start, or stop if already dictating.)";
+daemon  Run the input method and keep the speech model loaded.
+          --model      a streaming transcribe.cpp GGUF
+          --language   language code the model expects, e.g. en-US
+          --lookahead  encoder lookahead in 80 ms frames (cache-aware
+                       models: 0, 3, 6 or 13); lower is faster, higher
+                       more accurate
+toggle  Start dictating into the focused text field, or stop.)";
 
 static std::string socketPath() {
     const char* dir = std::getenv("XDG_RUNTIME_DIR");
@@ -59,19 +56,13 @@ class CDaemon {
         m_socket->addImplementation(m_impl);
     }
 
-    int run() {
-        sigset_t signals;
-        sigemptyset(&signals);
-        sigaddset(&signals, SIGINT);
-        sigaddset(&signals, SIGTERM);
-        sigprocmask(SIG_BLOCK, &signals, nullptr);
-        const int signalFD = signalfd(-1, &signals, SFD_CLOEXEC);
-
+    // Runs until killed: the compositor drops the input method and PipeWire
+    // the stream when the process goes away.
+    [[noreturn]] void run() {
         pollfd fds[] = {
             {.fd = m_inputMethod.fd(), .events = POLLIN},
             {.fd = m_socket->extractLoopFD(), .events = POLLIN},
             {.fd = m_transcriber.eventFD(), .events = POLLIN},
-            {.fd = signalFD, .events = POLLIN},
         };
 
         std::println(stderr, "ready");
@@ -95,26 +86,16 @@ class CDaemon {
             if (fds[2].revents & POLLIN)
                 for (const auto& update : m_transcriber.takeUpdates())
                     onUpdate(update);
-
-            if (fds[3].revents & POLLIN)
-                break;
         }
-
-        setDictating(false);
-        return 0;
     }
 
   private:
     void bind(CSharedPointer<Hyprwire::IObject>&& object) {
-        auto manager = m_managers.emplace_back(makeShared<CHyprdictateManagerObject>(std::move(object)));
-        auto* raw    = manager.get();
+        auto  manager = m_managers.emplace_back(makeShared<CHyprdictateManagerObject>(std::move(object)));
+        auto* raw     = manager.get();
 
-        manager->setStart([this] { setDictating(true); });
-        manager->setStop([this] { setDictating(false); });
         manager->setToggle([this] { setDictating(!m_dictating); });
         manager->setOnDestroy([this, raw] { std::erase_if(m_managers, [raw](const auto& m) { return m.get() == raw; }); });
-
-        manager->sendState(m_dictating);
     }
 
     void setDictating(bool on) {
@@ -129,9 +110,6 @@ class CDaemon {
             m_transcriber.setActive(false);
         }
         m_dictating = on;
-
-        for (const auto& manager : m_managers)
-            manager->sendState(m_dictating);
     }
 
     void onUpdate(const CTranscriber::SUpdate& update) {
@@ -157,7 +135,7 @@ class CDaemon {
     bool                                                 m_dictating = false;
 };
 
-static int runClient(std::string_view command) {
+static int toggle() {
     auto socket = Hyprwire::IClientSocket::open(socketPath());
     if (!socket) {
         std::println(stderr, "hyprdictate isn't running (no {})", socketPath());
@@ -172,23 +150,14 @@ static int runClient(std::string_view command) {
         return 1;
     }
 
-    auto     manager   = makeShared<CCHyprdictateManagerObject>(socket->bindProtocol(impl->protocol(), PROTOCOL_VERSION));
-    uint32_t dictating = 0;
-    manager->setState([&dictating](uint32_t state) { dictating = state; });
-
-    if (command == "start")
-        manager->sendStart();
-    else if (command == "stop")
-        manager->sendStop();
-    else
-        manager->sendToggle();
-
+    auto manager = makeShared<CCHyprdictateManagerObject>(socket->bindProtocol(impl->protocol(), PROTOCOL_VERSION));
+    manager->sendToggle();
+    // Returns once the daemon has handled it.
     socket->roundtrip();
-    std::println("{}", dictating ? "dictating" : "stopped");
     return 0;
 }
 
-static int runDaemon(std::vector<std::string_view> args) {
+[[noreturn]] static void runDaemon(std::vector<std::string_view> args) {
     CTranscriber::SOptions options;
 
     for (size_t i = 0; i < args.size(); ++i) {
@@ -211,8 +180,7 @@ static int runDaemon(std::vector<std::string_view> args) {
     if (options.model.empty())
         throw std::runtime_error("--model is required");
 
-    CDaemon daemon{options};
-    return daemon.run();
+    CDaemon{options}.run();
 }
 
 int main(int argc, char** argv) {
@@ -223,9 +191,9 @@ int main(int argc, char** argv) {
             throw std::runtime_error(USAGE);
 
         if (args[0] == "daemon")
-            return runDaemon({args.begin() + 1, args.end()});
-        if ((args[0] == "start" || args[0] == "stop" || args[0] == "toggle") && args.size() == 1)
-            return runClient(args[0]);
+            runDaemon({args.begin() + 1, args.end()});
+        if (args[0] == "toggle" && args.size() == 1)
+            return toggle();
 
         throw std::runtime_error(USAGE);
     } catch (const std::exception& e) {

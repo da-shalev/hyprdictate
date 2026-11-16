@@ -14,7 +14,7 @@ hyprdictate toggle   # start / stop, e.g. from a Hyprland bind
 ```
 
 The daemon keeps the model loaded and opens the microphone only while
-dictating. `start`, `stop` and `toggle` talk to it over a
+dictating. `toggle` talks to it over a
 [hyprwire](https://github.com/hyprwm/hyprwire) socket at
 `$XDG_RUNTIME_DIR/hyprdictate.sock`.
 

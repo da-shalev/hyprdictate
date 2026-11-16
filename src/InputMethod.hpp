@@ -6,8 +6,8 @@
 #include <string>
 
 struct wl_display;
-struct wl_registry;
-struct wl_seat;
+class CCWlRegistry;
+class CCWlSeat;
 class CCZwpInputMethodManagerV2;
 class CCZwpInputMethodV2;
 
@@ -21,23 +21,19 @@ class CInputMethod {
     CInputMethod(const CInputMethod&)            = delete;
     CInputMethod& operator=(const CInputMethod&) = delete;
 
-    int         fd() const;
-    // Before poll(): dispatch queued events and flush requests.
-    void        prepare();
-    // After poll(): read what arrived (if readable) and dispatch it.
-    void        dispatch(bool readable);
+    int  fd() const;
+    // Reads and handles events; false when the connection is gone.
+    bool dispatch();
+    void flush();
     // Another input method owns the seat.
-    bool        unavailable() const;
+    bool unavailable() const;
 
     // Starts a dictation at the cursor.
-    void        begin();
+    void begin();
     // Commits text the model won't revise; shows the rest as the preedit.
-    void        update(const std::string& committed, const std::string& tentative);
+    void update(const std::string& committed, const std::string& tentative);
     // Ends the dictation.
-    void        end();
-
-    // wl_registry's global event.
-    static void onGlobal(void* data, wl_registry* registry, uint32_t name, const char* interface, uint32_t version);
+    void end();
 
   private:
     struct SState {
@@ -50,9 +46,9 @@ class CInputMethod {
 
     void                                                         send(const std::string& commit, const std::string& preedit);
 
-    wl_display*                                                  m_display  = nullptr;
-    wl_registry*                                                 m_registry = nullptr;
-    wl_seat*                                                     m_seat     = nullptr;
+    wl_display*                                                  m_display = nullptr;
+    Hyprutils::Memory::CSharedPointer<CCWlRegistry>              m_registry;
+    Hyprutils::Memory::CSharedPointer<CCWlSeat>                  m_seat;
     Hyprutils::Memory::CSharedPointer<CCZwpInputMethodManagerV2> m_manager;
     Hyprutils::Memory::CSharedPointer<CCZwpInputMethodV2>        m_method;
 

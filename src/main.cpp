@@ -4,35 +4,23 @@
 
 #include <hyprdictate_core-client.hpp>
 #include <hyprdictate_core-server.hpp>
+#include <hyprutils/cli/ArgumentParser.hpp>
+#include <hyprutils/eventLoop/EventLoop.hpp>
 #include <hyprwire/hyprwire.hpp>
 
 #include <algorithm>
-#include <cerrno>
 #include <cstdlib>
 #include <filesystem>
-#include <format>
-#include <poll.h>
 #include <print>
 #include <string>
-#include <string_view>
+#include <unistd.h>
 #include <vector>
 
-using Hyprutils::Memory::CSharedPointer;
-using Hyprutils::Memory::makeShared;
+using namespace Hyprutils;
+using Memory::CSharedPointer;
+using Memory::makeShared;
 
 constexpr uint32_t PROTOCOL_VERSION = 1;
-
-constexpr const char* USAGE = R"(usage:
-  hyprdictate daemon --model <file.gguf> [--language <code>] [--lookahead <frames>]
-  hyprdictate toggle
-
-daemon  Run the input method and keep the speech model loaded.
-          --model      a streaming transcribe.cpp GGUF
-          --language   language code the model expects, e.g. en-US
-          --lookahead  encoder lookahead in 80 ms frames (cache-aware
-                       models: 0, 3, 6 or 13); lower is faster, higher
-                       more accurate
-toggle  Start dictating into the focused text field, or stop.)";
 
 static std::string socketPath() {
     const char* dir = std::getenv("XDG_RUNTIME_DIR");
@@ -41,9 +29,19 @@ static std::string socketPath() {
     return std::string{dir} + "/hyprdictate.sock";
 }
 
+static CSharedPointer<EventLoop::IEventLoop> createLoop() {
+    auto loop = EventLoop::IEventLoop::create();
+    if (!loop)
+        throw std::runtime_error(loop.error());
+    return *loop;
+}
+
 class CDaemon {
   public:
-    explicit CDaemon(const CTranscriber::SOptions& options) : m_transcriber(options) {
+    explicit CDaemon(const CTranscriber::SOptions& options) :
+        m_transcriber(options, [this, executor = m_loop->executor()](CTranscriber::SUpdate update) {
+            executor->post([this, update = std::move(update)] { onUpdate(update); });
+        }) {
         const auto path = socketPath();
         std::error_code ec;
         std::filesystem::remove(path, ec);
@@ -54,42 +52,43 @@ class CDaemon {
 
         m_impl = makeShared<CHyprdictateCoreImpl>(PROTOCOL_VERSION, [this](CSharedPointer<Hyprwire::IObject> object) { bind(std::move(object)); });
         m_socket->addImplementation(m_impl);
+
+        watch(m_inputMethod.fd(), [this] {
+            if (!m_inputMethod.dispatch())
+                fail("lost the Wayland connection");
+            else if (m_inputMethod.unavailable())
+                fail("another input method is running on this seat");
+        });
+        watch(m_socket->extractLoopFD(), [this] { m_socket->dispatchEvents(false); });
+        m_flush = m_loop->addPostDispatch([this] { m_inputMethod.flush(); });
     }
 
     // Runs until killed: the compositor drops the input method and PipeWire
     // the stream when the process goes away.
     [[noreturn]] void run() {
-        pollfd fds[] = {
-            {.fd = m_inputMethod.fd(), .events = POLLIN},
-            {.fd = m_socket->extractLoopFD(), .events = POLLIN},
-            {.fd = m_transcriber.eventFD(), .events = POLLIN},
-        };
-
+        m_inputMethod.flush();
         std::println(stderr, "ready");
 
-        while (true) {
-            m_inputMethod.prepare();
-            if (poll(fds, std::size(fds), -1) < 0) {
-                m_inputMethod.dispatch(false);
-                if (errno == EINTR)
-                    continue;
-                throw std::runtime_error("poll failed");
-            }
-
-            m_inputMethod.dispatch(fds[0].revents & POLLIN);
-            if (m_inputMethod.unavailable())
-                throw std::runtime_error("another input method is running on this seat");
-
-            if (fds[1].revents & POLLIN)
-                m_socket->dispatchEvents(false);
-
-            if (fds[2].revents & POLLIN)
-                for (const auto& update : m_transcriber.takeUpdates())
-                    onUpdate(update);
-        }
+        if (auto result = m_loop->enterLoop(); !result)
+            throw std::runtime_error(result.error());
+        throw std::runtime_error(m_error);
     }
 
   private:
+    // Runs fn on the loop whenever fd is readable. The loop owns what it's
+    // given, so it gets a duplicate of a descriptor its library keeps.
+    void watch(int fd, std::function<void()> fn) {
+        auto source = m_loop->addFD(OS::CFileDescriptor{dup(fd)}, EventLoop::eEventMask::READABLE, [fn = std::move(fn)](EventLoop::IFDSource&, EventLoop::FdEventMask) { fn(); });
+        if (!source)
+            throw std::runtime_error(source.error());
+        m_sources.emplace_back(*source);
+    }
+
+    void fail(std::string error) {
+        m_error = std::move(error);
+        m_loop->stop();
+    }
+
     void bind(CSharedPointer<Hyprwire::IObject>&& object) {
         auto  manager = m_managers.emplace_back(makeShared<CHyprdictateManagerObject>(std::move(object)));
         auto* raw     = manager.get();
@@ -124,18 +123,23 @@ class CDaemon {
         }
     }
 
-    CInputMethod                                         m_inputMethod;
-    CTranscriber                                         m_transcriber;
-    CAudio                                               m_audio{[this](const float* samples, size_t count) { m_transcriber.pushAudio(samples, count); }};
+    CSharedPointer<EventLoop::IEventLoop>                  m_loop = createLoop();
+    CInputMethod                                           m_inputMethod;
+    CTranscriber                                           m_transcriber;
+    CAudio                                                 m_audio{[this](const float* samples, size_t count) { m_transcriber.pushAudio(samples, count); }};
 
-    CSharedPointer<Hyprwire::IServerSocket>              m_socket;
-    CSharedPointer<CHyprdictateCoreImpl>                 m_impl;
+    CSharedPointer<Hyprwire::IServerSocket>                m_socket;
+    CSharedPointer<CHyprdictateCoreImpl>                   m_impl;
     std::vector<CSharedPointer<CHyprdictateManagerObject>> m_managers;
 
-    bool                                                 m_dictating = false;
+    std::vector<CSharedPointer<EventLoop::IFDSource>>      m_sources;
+    CSharedPointer<EventLoop::IPostDispatchHook>           m_flush;
+
+    bool                                                   m_dictating = false;
+    std::string                                            m_error;
 };
 
-static int toggle() {
+static int sendToggle() {
     auto socket = Hyprwire::IClientSocket::open(socketPath());
     if (!socket) {
         std::println(stderr, "hyprdictate isn't running (no {})", socketPath());
@@ -157,45 +161,37 @@ static int toggle() {
     return 0;
 }
 
-[[noreturn]] static void runDaemon(std::vector<std::string_view> args) {
-    CTranscriber::SOptions options;
+int main(int argc, char** argv) {
+    std::vector<const char*> args(argv, argv + argc);
+    CLI::CArgumentParser     parser{args};
+    (void)parser.registerStringOption("model", "m", "Run the daemon with this streaming transcribe.cpp GGUF");
+    (void)parser.registerStringOption("language", "l", "Language code the model expects, e.g. en-US");
+    (void)parser.registerIntOption("lookahead", "a", "Encoder lookahead in 80 ms frames (0, 3, 6 or 13): lower is faster, higher more accurate");
+    (void)parser.registerBoolOption("toggle", "t", "Start dictating into the focused text field, or stop");
+    (void)parser.registerBoolOption("help", "h", "Show this help");
 
-    for (size_t i = 0; i < args.size(); ++i) {
-        const auto value = [&]() -> std::string {
-            if (i + 1 >= args.size())
-                throw std::runtime_error(std::format("{} needs a value", args[i]));
-            return std::string{args[++i]};
-        };
+    const auto parsed = parser.parse();
+    const auto model  = parser.getString("model");
+    const bool help   = parser.getBool("help").value_or(false);
+    const bool toggle = parser.getBool("toggle").value_or(false);
 
-        if (args[i] == "--model")
-            options.model = value();
-        else if (args[i] == "--language")
-            options.language = value();
-        else if (args[i] == "--lookahead")
-            options.lookahead = std::stoi(value());
-        else
-            throw std::runtime_error(std::format("unknown option {}", args[i]));
+    if (!parsed || help || (!model && !toggle)) {
+        if (!parsed)
+            std::println(stderr, "{}", parsed.error());
+        std::println("{}", parser.getDescription("hyprdictate: streaming dictation into the focused text field"));
+        return parsed && help ? 0 : 1;
     }
 
-    if (options.model.empty())
-        throw std::runtime_error("--model is required");
-
-    CDaemon{options}.run();
-}
-
-int main(int argc, char** argv) {
-    const std::vector<std::string_view> args(argv + 1, argv + argc);
-
     try {
-        if (args.empty())
-            throw std::runtime_error(USAGE);
+        if (toggle)
+            return sendToggle();
 
-        if (args[0] == "daemon")
-            runDaemon({args.begin() + 1, args.end()});
-        if (args[0] == "toggle" && args.size() == 1)
-            return toggle();
-
-        throw std::runtime_error(USAGE);
+        CDaemon{{
+                    .model     = std::string{*model},
+                    .language  = std::string{parser.getString("language").value_or("")},
+                    .lookahead = parser.getInt("lookahead").value_or(-1),
+                }}
+            .run();
     } catch (const std::exception& e) {
         std::println(stderr, "{}", e.what());
         return 1;

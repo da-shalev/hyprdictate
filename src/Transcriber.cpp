@@ -6,8 +6,6 @@
 #include <format>
 #include <print>
 #include <stdexcept>
-#include <sys/eventfd.h>
-#include <unistd.h>
 #include <utility>
 
 // 16 kHz mono float PCM is fed in blocks of at least 100 ms; the model
@@ -18,7 +16,7 @@ static std::string status(int s) {
     return transcribe_status_string(s);
 }
 
-CTranscriber::CTranscriber(const SOptions& options) : m_options(options) {
+CTranscriber::CTranscriber(const SOptions& options, UpdateFn onUpdate) : m_options(options), m_onUpdate(std::move(onUpdate)) {
     if (const auto s = transcribe_init_backends_default(); s != TRANSCRIBE_OK)
         throw std::runtime_error(std::format("can't initialize compute backends: {}", status(s)));
 
@@ -27,8 +25,7 @@ CTranscriber::CTranscriber(const SOptions& options) : m_options(options) {
 
     std::println(stderr, "loaded {} on {}", m_options.model, transcribe_model_backend(transcribe_get_model(m_session)));
 
-    m_eventFD = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
-    m_thread  = std::thread([this] { run(); });
+    m_thread = std::thread([this] { run(); });
 }
 
 CTranscriber::~CTranscriber() {
@@ -40,7 +37,6 @@ CTranscriber::~CTranscriber() {
     m_thread.join();
 
     transcribe_session_free(m_session);
-    close(m_eventFD);
 }
 
 void CTranscriber::setActive(bool active) {
@@ -58,20 +54,6 @@ void CTranscriber::pushAudio(const float* samples, size_t count) {
     m_audio.insert(m_audio.end(), samples, samples + count);
     if (m_audio.size() >= MIN_FEED_SAMPLES)
         m_wake.notify_one();
-}
-
-int CTranscriber::eventFD() const {
-    return m_eventFD;
-}
-
-std::vector<CTranscriber::SUpdate> CTranscriber::takeUpdates() {
-    uint64_t count = 0;
-    if (read(m_eventFD, &count, sizeof(count)) < 0) {
-        // EAGAIN: nothing new since the last read.
-    }
-
-    std::lock_guard lg(m_lock);
-    return std::exchange(m_updates, {});
 }
 
 void CTranscriber::run() {
@@ -176,13 +158,5 @@ void CTranscriber::publish(bool final, std::string error) {
             update.tentative.assign(text.tentative_text, text.tentative_text_bytes);
     }
 
-    {
-        std::lock_guard lg(m_lock);
-        m_updates.emplace_back(std::move(update));
-    }
-
-    const uint64_t one = 1;
-    if (write(m_eventFD, &one, sizeof(one)) < 0) {
-        // The counter is saturated, so the main loop wakes anyway.
-    }
+    m_onUpdate(std::move(update));
 }

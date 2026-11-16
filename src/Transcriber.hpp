@@ -1,6 +1,7 @@
 #pragma once
 
 #include <condition_variable>
+#include <functional>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -9,8 +10,7 @@
 struct transcribe_session;
 
 // Runs a streaming speech model on its own thread. Audio goes in from any
-// thread; text comes out as updates the main loop collects when eventFD()
-// turns readable.
+// thread; text comes out through the update callback, on that thread.
 class CTranscriber {
   public:
     struct SOptions {
@@ -31,18 +31,17 @@ class CTranscriber {
         std::string error;
     };
 
-    explicit CTranscriber(const SOptions& options);
+    using UpdateFn = std::function<void(SUpdate)>;
+
+    CTranscriber(const SOptions& options, UpdateFn onUpdate);
     ~CTranscriber();
 
     CTranscriber(const CTranscriber&)            = delete;
     CTranscriber& operator=(const CTranscriber&) = delete;
 
     // Starts or stops a dictation; the worker follows.
-    void                 setActive(bool active);
-    void                 pushAudio(const float* samples, size_t count);
-
-    int                  eventFD() const;
-    std::vector<SUpdate> takeUpdates();
+    void setActive(bool active);
+    void pushAudio(const float* samples, size_t count);
 
   private:
     void                    run();
@@ -52,8 +51,8 @@ class CTranscriber {
     void                    publish(bool final, std::string error = {});
 
     SOptions                m_options;
+    UpdateFn                m_onUpdate;
     transcribe_session*     m_session = nullptr;
-    int                     m_eventFD = -1;
 
     // Shared with the worker.
     std::mutex              m_lock;
@@ -61,7 +60,6 @@ class CTranscriber {
     bool                    m_active = false;
     bool                    m_quit   = false;
     std::vector<float>      m_audio;
-    std::vector<SUpdate>    m_updates;
 
     // Worker only.
     bool                    m_streaming = false;

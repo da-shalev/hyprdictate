@@ -11,12 +11,12 @@ field as they arrive; the words it may still revise sit in the field's preedit
 until they settle. Nothing fakes key presses.
 
 ```sh
-hyprdictate daemon --model nemotron-3.5-asr-streaming-0.6b-Q8_0.gguf --language en-US --lookahead 6
-hyprdictate toggle   # start / stop, e.g. from a Hyprland bind
+hyprdictate --model nemotron-3.5-asr-streaming-0.6b-Q8_0.gguf --language en-US --lookahead 6
+hyprdictate --toggle # start / stop, e.g. from a Hyprland bind
 ```
 
 The daemon keeps the model loaded and opens the microphone only while
-dictating. `toggle` talks to it over a
+dictating. `--toggle` talks to it over a
 [hyprwire](https://github.com/hyprwm/hyprwire) socket at
 `$XDG_RUNTIME_DIR/hyprdictate.sock`.
 

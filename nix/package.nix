@@ -9,6 +9,7 @@
   hyprutils,
   pipewire,
   wayland,
+  wayland-scanner,
   transcribe-cpp,
 }:
 stdenv.mkDerivation {
@@ -32,6 +33,8 @@ stdenv.mkDerivation {
     hyprwayland-scanner
     # hyprwire-scanner
     hyprwire
+    # wayland.xml
+    wayland-scanner
   ];
 
   buildInputs = [

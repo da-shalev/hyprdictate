@@ -15,7 +15,9 @@ find_package(PkgConfig REQUIRED)
 find_package(hyprwayland-scanner 0.4.0 REQUIRED)
 find_program(HYPRWIRE_SCANNER hyprwire-scanner REQUIRED)
 
-pkg_check_modules(deps REQUIRED IMPORTED_TARGET wayland-client libpipewire-0.3 hyprwire hyprutils)
+# hyprutils 0.14.2 added the event loop.
+pkg_check_modules(deps REQUIRED IMPORTED_TARGET wayland-client libpipewire-0.3 hyprwire hyprutils>=0.14.2)
+pkg_get_variable(WAYLAND_SCANNER_PKGDATA_DIR wayland-scanner pkgdatadir)
 
 # transcribe.cpp, built and installed on its own (nix/transcribe-cpp.nix): its
 # CMake isn't usable as a subdirectory of another project.
@@ -26,6 +28,11 @@ add_executable(hyprdictate src/main.cpp src/Audio.cpp src/InputMethod.cpp src/Tr
 
 set(GENERATED ${CMAKE_CURRENT_BINARY_DIR}/protocols)
 file(MAKE_DIRECTORY ${GENERATED})
+
+add_custom_command(
+  OUTPUT ${GENERATED}/wayland.cpp ${GENERATED}/wayland.hpp
+  COMMAND hyprwayland-scanner --wayland-enums --client ${WAYLAND_SCANNER_PKGDATA_DIR}/wayland.xml ${GENERATED}/
+  VERBATIM)
 
 add_custom_command(
   OUTPUT ${GENERATED}/input-method-unstable-v2.cpp ${GENERATED}/input-method-unstable-v2.hpp
@@ -47,7 +54,7 @@ foreach(side server client)
   target_sources(hyprdictate PRIVATE ${GENERATED}/hyprdictate_core-${side}.cpp)
 endforeach()
 
-target_sources(hyprdictate PRIVATE ${GENERATED}/input-method-unstable-v2.cpp)
+target_sources(hyprdictate PRIVATE ${GENERATED}/wayland.cpp ${GENERATED}/input-method-unstable-v2.cpp)
 target_include_directories(hyprdictate PRIVATE ${GENERATED} ${TRANSCRIBE_INCLUDE_DIR})
 target_link_libraries(hyprdictate PRIVATE PkgConfig::deps ${TRANSCRIBE_LIBRARY})
 

@@ -1,5 +1,5 @@
 # nix-maid module: runs the daemon as a user service in the graphical session
-# and puts the hyprdictate CLI on PATH. Bind `hyprdictate toggle` to a key.
+# and puts the hyprdictate CLI on PATH. Bind `hyprdictate --toggle` to a key.
 {
   config,
   lib,
@@ -47,7 +47,7 @@ in
         "pipewire.service"
       ];
       serviceConfig = {
-        ExecStart = "${lib.getExe cfg.package} daemon --model ${cfg.model} --language ${cfg.language} --lookahead ${toString cfg.lookahead}";
+        ExecStart = "${lib.getExe cfg.package} --model ${cfg.model} --language ${cfg.language} --lookahead ${toString cfg.lookahead}";
         Restart = "on-failure";
         RestartSec = 2;
       };

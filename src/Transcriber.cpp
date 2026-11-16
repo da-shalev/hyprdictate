@@ -3,6 +3,7 @@
 #include <transcribe.h>
 #include <transcribe/parakeet.h>
 
+#include <algorithm>
 #include <format>
 #include <print>
 #include <stdexcept>
@@ -148,14 +149,27 @@ void CTranscriber::publish(bool final, std::string error) {
     transcribe_stream_text text;
     transcribe_stream_text_init(&text);
     if (m_streaming && transcribe_stream_get_text(m_session, &text) == TRANSCRIBE_OK) {
-        // committed_text only grows: what's past the published length is new.
-        const std::string_view committed{text.committed_text ? text.committed_text : "", text.committed_text_bytes};
+        const std::string_view full{text.full_text ? text.full_text : "", text.full_text_bytes};
+        std::string_view       committed{text.committed_text ? text.committed_text : "", text.committed_text_bytes};
+
+        // WATCH(https://github.com/handy-computer/transcribe.cpp/issues/215):
+        // for Parakeet/Nemotron, committed_text stops growing after the first
+        // sentence although every token is reported committed, so the rest
+        // would stay tentative until the stream ends. When every token is
+        // committed, take the whole transcript as committed. Remove this once a
+        // transcribe.cpp release contains the fix (PR #218). Check:
+        // committed_text keeps growing past a sentence end.
+        const int tokens = transcribe_n_tokens(m_session);
+        if (tokens > 0 && transcribe_stream_n_committed_tokens(m_session) >= tokens)
+            committed = full;
+
+        // committed only grows: what's past the published length is new, and
+        // the rest of the transcript is tentative.
         if (committed.size() > m_published) {
             update.committed = committed.substr(m_published);
             m_published      = committed.size();
         }
-        if (text.tentative_text)
-            update.tentative.assign(text.tentative_text, text.tentative_text_bytes);
+        update.tentative = full.substr(std::min(m_published, full.size()));
     }
 
     m_onUpdate(std::move(update));

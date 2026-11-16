@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<protocol name="hyprdictate_core" version="1">
+  <copyright>
+    MIT License
+  </copyright>
+
+  <object name="hyprdictate_manager" version="1">
+    <description summary="dictation control">
+      Starts and stops dictation in the running hyprdictate daemon.
+    </description>
+
+    <c2s name="start">
+      <description summary="Start dictating"/>
+    </c2s>
+
+    <c2s name="stop">
+      <description summary="Stop dictating"/>
+    </c2s>
+
+    <c2s name="toggle">
+      <description summary="Start dictating, or stop if already dictating"/>
+    </c2s>
+
+    <s2c name="state">
+      <description summary="Whether the daemon is dictating, sent on bind and after each request"/>
+      <arg name="dictating" type="uint" summary="1 while dictating, 0 otherwise"/>
+    </s2c>
+  </object>
+</protocol>

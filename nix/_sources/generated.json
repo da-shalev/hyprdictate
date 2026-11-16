@@ -1,0 +1,23 @@
+{
+    "transcribe-cpp": {
+        "cargoLock": null,
+        "date": null,
+        "extract": null,
+        "name": "transcribe-cpp",
+        "passthru": null,
+        "pinned": false,
+        "src": {
+            "deepClone": false,
+            "fetchSubmodules": false,
+            "leaveDotGit": false,
+            "name": null,
+            "owner": "handy-computer",
+            "repo": "transcribe.cpp",
+            "rev": "v0.4.2",
+            "sha256": "sha256-6zEPd1DA9A19l9rUPzY5SRz5nmQZN/3cDzqbwOG02A0=",
+            "sparseCheckout": [],
+            "type": "github"
+        },
+        "version": "v0.4.2"
+    }
+}

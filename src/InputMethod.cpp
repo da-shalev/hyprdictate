@@ -49,6 +49,12 @@ CInputMethod::CInputMethod() : m_display(wl_display_connect(nullptr)) {
     m_method->setUnavailable([this](CCZwpInputMethodV2*) { m_unavailable = true; });
 
     wl_display_roundtrip(m_display);
+
+    // The seat has one input method: stop before anything else starts (the
+    // model, the control socket), as hyprsunset does when its manager is
+    // blocked.
+    if (m_unavailable)
+        throw std::runtime_error("Another input method is running on this seat. Is hyprdictate already running?");
 }
 
 CInputMethod::~CInputMethod() {

@@ -17,10 +17,24 @@ This project is written and maintained with AI assistance.
 Download a streaming transcribe.cpp model, e.g. `nemotron-3.5-asr-streaming-0.6b-Q8_0.gguf` from
 [Nemotron 3.5 ASR Streaming](https://huggingface.co/handy-computer/nemotron-3.5-asr-streaming-0.6b-gguf).
 
-Start the daemon with your session and bind a key to toggle dictation, e.g. in Hyprland:
+Point `~/.config/hypr/hyprdictate.conf` at it ([assets/example.conf](assets/example.conf) lists every setting, and is installed as `share/hypr/hyprdictate.conf`):
 
 ```ini
-exec-once = hyprdictate --model ~/models/nemotron-3.5-asr-streaming-0.6b-Q8_0.gguf --language en-US
+general {
+    model = ~/models/nemotron-3.5-asr-streaming-0.6b-Q8_0.gguf
+    language = en-US
+}
+```
+
+Start the daemon with your session, through its systemd user unit:
+
+```sh
+systemctl --user enable --now hyprdictate.service
+```
+
+and bind a key to toggle dictation, e.g. in Hyprland:
+
+```ini
 bind = SUPER, D, exec, hyprdictate --toggle
 ```
 
@@ -36,7 +50,7 @@ Requirements:
 ## Nix
 
 `default.nix` and the flake export `overlays.default` and `maidModules.default`, a
-[nix-maid](https://github.com/viperML/nix-maid) module that runs the daemon in the graphical session:
+[nix-maid](https://github.com/viperML/nix-maid) module that writes `hyprdictate.conf` and runs the unit in the graphical session:
 
 ```nix
 maid.sharedModules = [ (import hyprdictate).maidModules.default ];
@@ -53,7 +67,7 @@ hyprdictate = {
 ### Dependencies
  - wayland, wayland-scanner
  - pipewire
- - hyprutils, hyprwire, hyprwayland-scanner
+ - hyprutils, hyprlang, hyprwire, hyprwayland-scanner
  - [transcribe.cpp](https://github.com/handy-computer/transcribe.cpp), built with `-DTRANSCRIBE_VULKAN=ON -DTRANSCRIBE_BUILD_SHARED=ON` and installed
 
 ### Building

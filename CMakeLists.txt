@@ -3,10 +3,17 @@ cmake_minimum_required(VERSION 3.27)
 file(READ "${CMAKE_SOURCE_DIR}/VERSION" VER_RAW)
 string(STRIP ${VER_RAW} VERSION)
 
-project(hyprdictate VERSION ${VERSION} LANGUAGES CXX)
+project(
+  hyprdictate
+  DESCRIPTION "Streaming dictation into the focused text field"
+  VERSION ${VERSION}
+  LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+# build/compile_commands.json, which clangd reads for include paths.
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+add_compile_definitions(HYPRDICTATE_VERSION="${VERSION}")
 add_compile_options(-Wall -Wextra -Wno-unused-parameter -Wno-missing-field-initializers -Wno-unused-value)
 
 include(GNUInstallDirs)
@@ -16,7 +23,7 @@ find_package(hyprwayland-scanner 0.4.0 REQUIRED)
 find_program(HYPRWIRE_SCANNER hyprwire-scanner REQUIRED)
 
 # hyprutils 0.14.2 added the event loop.
-pkg_check_modules(deps REQUIRED IMPORTED_TARGET wayland-client libpipewire-0.3 hyprwire hyprutils>=0.14.2)
+pkg_check_modules(deps REQUIRED IMPORTED_TARGET wayland-client libpipewire-0.3 hyprwire hyprutils>=0.14.2 hyprlang>=0.6.0)
 pkg_get_variable(WAYLAND_SCANNER_PKGDATA_DIR wayland-scanner pkgdatadir)
 
 # transcribe.cpp, built and installed on its own (nix/transcribe-cpp.nix): its
@@ -59,3 +66,11 @@ target_include_directories(hyprdictate PRIVATE ${GENERATED} ${TRANSCRIBE_INCLUDE
 target_link_libraries(hyprdictate PRIVATE PkgConfig::deps ${TRANSCRIBE_LIBRARY})
 
 install(TARGETS hyprdictate)
+
+configure_file(systemd/hyprdictate.service.in systemd/hyprdictate.service @ONLY)
+install(FILES ${CMAKE_CURRENT_BINARY_DIR}/systemd/hyprdictate.service
+        DESTINATION lib/systemd/user)
+
+install(FILES ${CMAKE_SOURCE_DIR}/assets/example.conf
+        DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/hypr
+        RENAME hyprdictate.conf)

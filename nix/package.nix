@@ -7,6 +7,7 @@
   hyprwayland-scanner,
   hyprwire,
   hyprutils,
+  hyprlang,
   pipewire,
   wayland,
   wayland-scanner,
@@ -23,6 +24,8 @@ stdenv.mkDerivation {
       ../CMakeLists.txt
       ../src
       ../protocols
+      ../systemd
+      ../assets
     ];
   };
 
@@ -40,6 +43,7 @@ stdenv.mkDerivation {
   buildInputs = [
     hyprwire
     hyprutils
+    hyprlang
     pipewire
     wayland
     transcribe-cpp
@@ -47,6 +51,7 @@ stdenv.mkDerivation {
 
   meta = {
     description = "Streaming dictation into the focused text field, as a Wayland input method";
+    homepage = "https://github.com/da-shalev/hyprdictate";
     license = lib.licenses.mit;
     mainProgram = "hyprdictate";
     platforms = lib.platforms.linux;

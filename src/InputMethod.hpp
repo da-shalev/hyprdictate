@@ -21,7 +21,7 @@ class CInputMethod {
     CInputMethod(const CInputMethod&)            = delete;
     CInputMethod& operator=(const CInputMethod&) = delete;
 
-    int  fd() const;
+    int           fd() const;
     // Reads and handles events; false when the connection is gone.
     bool dispatch();
     void flush();
@@ -37,7 +37,7 @@ class CInputMethod {
 
   private:
     struct SState {
-        bool        active = false;
+        bool active = false;
         // Text around the cursor and the cursor's byte offset in it, when the
         // field reports them.
         std::string surrounding;
@@ -53,13 +53,13 @@ class CInputMethod {
     Hyprutils::Memory::CSharedPointer<CCZwpInputMethodV2>        m_method;
 
     // Events build the pending state; done applies it.
-    SState                                                       m_pending;
-    SState                                                       m_current;
-    uint32_t                                                     m_serial      = 0;
-    bool                                                         m_unavailable = false;
+    SState   m_pending;
+    SState   m_current;
+    uint32_t m_serial      = 0;
+    bool     m_unavailable = false;
 
     // Spaces around the dictated text, decided at begin() from the text
     // around the cursor.
-    std::string                                                  m_before;
-    std::string                                                  m_after;
+    std::string m_before;
+    std::string m_after;
 };

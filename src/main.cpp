@@ -4,13 +4,19 @@
 
 #include <hyprdictate_core-client.hpp>
 #include <hyprdictate_core-server.hpp>
+#include <hyprlang.hpp>
 #include <hyprutils/cli/ArgumentParser.hpp>
+#include <hyprutils/cli/Logger.hpp>
 #include <hyprutils/eventLoop/EventLoop.hpp>
+#include <hyprutils/memory/WeakPtr.hpp>
+#include <hyprutils/path/Path.hpp>
 #include <hyprwire/hyprwire.hpp>
 
-#include <algorithm>
+#include <any>
 #include <cstdlib>
 #include <filesystem>
+#include <format>
+#include <optional>
 #include <print>
 #include <string>
 #include <unistd.h>
@@ -18,6 +24,7 @@
 
 using namespace Hyprutils;
 using Memory::CSharedPointer;
+using Memory::CWeakPointer;
 using Memory::makeShared;
 
 constexpr uint32_t PROTOCOL_VERSION = 1;
@@ -27,6 +34,49 @@ static std::string socketPath() {
     if (!dir || !*dir)
         throw std::runtime_error("XDG_RUNTIME_DIR is not set");
     return std::string{dir} + "/hyprdictate.sock";
+}
+
+static Hyprutils::CLI::CLogger logger;
+
+// The daemon's settings, from the file given with --config or else
+// hyprdictate.conf where the Hypr tools keep theirs ($XDG_CONFIG_HOME/hypr/,
+// ~/.config/hypr/, $XDG_CONFIG_DIRS/hypr/, /etc/xdg/hypr/).
+static CTranscriber::SOptions loadConfig(std::optional<std::string> path) {
+    if (!path)
+        path = Path::findConfig("hyprdictate").first;
+    if (!path)
+        // As hypridle words it (src/main.cpp).
+        throw std::runtime_error("No hyprdictate.conf file found in:\n"
+                                 "    $XDG_CONFIG_HOME/hypr/, ~/.config/hypr/, [XDG_CONFIG_DIRS]/hypr/, /etc/xdg/hypr/\n"
+                                 "Create a config or specify one manually:\n"
+                                 "    hyprdictate -c /path/to/conf");
+    // hyprlang throws a bare string for a missing file.
+    if (!std::filesystem::exists(*path))
+        throw std::runtime_error(std::format("Specified file not found: {}", *path));
+
+    // Settings live in `general`, so a misspelled one is an error: hyprlang
+    // passes unknown top-level keys over as handlers.
+    Hyprlang::CConfig config{path->c_str(), Hyprlang::SConfigOptions{.throwAllErrors = true}};
+    config.addConfigValue("general:model", Hyprlang::STRING{""});
+    config.addConfigValue("general:language", Hyprlang::STRING{""});
+    config.addConfigValue("general:lookahead", Hyprlang::INT{-1});
+    config.commence();
+    if (const auto RESULT = config.parse(); RESULT.error)
+        throw std::runtime_error(std::format("Config has errors:\n{}", RESULT.getError()));
+
+    const std::string MODEL = std::any_cast<Hyprlang::STRING>(config.getConfigValue("general:model"));
+    if (MODEL.empty())
+        throw std::runtime_error(std::format("{}: general:model is not set", *path));
+    // ~ and paths relative to the config's directory.
+    const auto RESOLVED = Path::resolvePath(MODEL, std::filesystem::path{*path}.parent_path());
+    if (!RESOLVED)
+        throw std::runtime_error(std::format("{}: model {}: {}", *path, MODEL, RESOLVED.error()));
+
+    return {
+        .model     = *RESOLVED,
+        .language  = std::any_cast<Hyprlang::STRING>(config.getConfigValue("general:language")),
+        .lookahead = static_cast<int>(std::any_cast<Hyprlang::INT>(config.getConfigValue("general:lookahead"))),
+    };
 }
 
 static CSharedPointer<EventLoop::IEventLoop> createLoop() {
@@ -39,16 +89,14 @@ static CSharedPointer<EventLoop::IEventLoop> createLoop() {
 class CDaemon {
   public:
     explicit CDaemon(const CTranscriber::SOptions& options) :
-        m_transcriber(options, [this, executor = m_loop->executor()](CTranscriber::SUpdate update) {
-            executor->post([this, update = std::move(update)] { onUpdate(update); });
-        }) {
-        const auto path = socketPath();
+        m_transcriber(options, [this, executor = m_loop->executor()](CTranscriber::SUpdate update) { executor->post([this, update = std::move(update)] { onUpdate(update); }); }) {
+        const auto      PATH = socketPath();
         std::error_code ec;
-        std::filesystem::remove(path, ec);
+        std::filesystem::remove(PATH, ec);
 
-        m_socket = Hyprwire::IServerSocket::open(path);
+        m_socket = Hyprwire::IServerSocket::open(PATH);
         if (!m_socket)
-            throw std::runtime_error("can't open the control socket " + path);
+            throw std::runtime_error("can't open the control socket " + PATH);
 
         m_impl = makeShared<CHyprdictateCoreImpl>(PROTOCOL_VERSION, [this](CSharedPointer<Hyprwire::IObject> object) { bind(std::move(object)); });
         m_socket->addImplementation(m_impl);
@@ -67,7 +115,7 @@ class CDaemon {
     // the stream when the process goes away.
     [[noreturn]] void run() {
         m_inputMethod.flush();
-        std::println(stderr, "ready");
+        logger.log(Hyprutils::CLI::LOG_DEBUG, "ready");
 
         if (auto result = m_loop->enterLoop(); !result)
             throw std::runtime_error(result.error());
@@ -90,11 +138,10 @@ class CDaemon {
     }
 
     void bind(CSharedPointer<Hyprwire::IObject>&& object) {
-        auto  manager = m_managers.emplace_back(makeShared<CHyprdictateManagerObject>(std::move(object)));
-        auto* raw     = manager.get();
+        const auto MANAGER = m_managers.emplace_back(makeShared<CHyprdictateManagerObject>(std::move(object)));
 
-        manager->setToggle([this] { setDictating(!m_dictating); });
-        manager->setOnDestroy([this, raw] { std::erase_if(m_managers, [raw](const auto& m) { return m.get() == raw; }); });
+        MANAGER->setToggle([this] { setDictating(!m_dictating); });
+        MANAGER->setOnDestroy([this, weak = CWeakPointer<CHyprdictateManagerObject>{MANAGER}] { std::erase(m_managers, weak); });
     }
 
     void setDictating(bool on) {
@@ -118,7 +165,7 @@ class CDaemon {
 
         m_inputMethod.end();
         if (!update.error.empty()) {
-            std::println(stderr, "{}", update.error);
+            logger.log(Hyprutils::CLI::LOG_ERR, "{}", update.error);
             setDictating(false);
         }
     }
@@ -140,60 +187,75 @@ class CDaemon {
 };
 
 static int sendToggle() {
-    auto socket = Hyprwire::IClientSocket::open(socketPath());
-    if (!socket) {
-        std::println(stderr, "hyprdictate isn't running (no {})", socketPath());
+    const auto SOCKET = Hyprwire::IClientSocket::open(socketPath());
+    if (!SOCKET) {
+        logger.log(Hyprutils::CLI::LOG_ERR, "hyprdictate isn't running (no {})", socketPath());
         return 1;
     }
 
-    auto impl = makeShared<CCHyprdictateCoreImpl>(PROTOCOL_VERSION);
-    socket->addImplementation(impl);
+    const auto IMPL = makeShared<CCHyprdictateCoreImpl>(PROTOCOL_VERSION);
+    SOCKET->addImplementation(IMPL);
 
-    if (!socket->waitForHandshake() || !socket->getSpec(impl->protocol()->specName())) {
-        std::println(stderr, "the daemon doesn't speak the hyprdictate protocol");
+    if (!SOCKET->waitForHandshake() || !SOCKET->getSpec(IMPL->protocol()->specName())) {
+        logger.log(Hyprutils::CLI::LOG_ERR, "the daemon doesn't speak the hyprdictate protocol");
         return 1;
     }
 
-    auto manager = makeShared<CCHyprdictateManagerObject>(socket->bindProtocol(impl->protocol(), PROTOCOL_VERSION));
-    manager->sendToggle();
+    const auto MANAGER = makeShared<CCHyprdictateManagerObject>(SOCKET->bindProtocol(IMPL->protocol(), PROTOCOL_VERSION));
+    MANAGER->sendToggle();
     // Returns once the daemon has handled it.
-    socket->roundtrip();
+    SOCKET->roundtrip();
     return 0;
 }
 
+// Everything is caught; only logging that last error could still throw, which
+// can only end the process anyway.
+// NOLINTNEXTLINE(bugprone-exception-escape)
 int main(int argc, char** argv) {
-    std::vector<const char*> args(argv, argv + argc);
-    CLI::CArgumentParser     parser{args};
-    (void)parser.registerStringOption("model", "m", "Run the daemon with this streaming transcribe.cpp GGUF");
-    (void)parser.registerStringOption("language", "l", "Language code the model expects, e.g. en-US");
-    (void)parser.registerIntOption("lookahead", "a", "Encoder lookahead in 80 ms frames (0, 3, 6 or 13): lower is faster, higher more accurate");
-    (void)parser.registerBoolOption("toggle", "t", "Start dictating into the focused text field, or stop");
-    (void)parser.registerBoolOption("help", "h", "Show this help");
-
-    const auto parsed = parser.parse();
-    const auto model  = parser.getString("model");
-    const bool help   = parser.getBool("help").value_or(false);
-    const bool toggle = parser.getBool("toggle").value_or(false);
-
-    if (!parsed || help || (!model && !toggle)) {
-        if (!parsed)
-            std::println(stderr, "{}", parsed.error());
-        std::println("{}", parser.getDescription("hyprdictate: streaming dictation into the focused text field"));
-        return parsed && help ? 0 : 1;
-    }
-
     try {
-        if (toggle)
+        std::vector<const char*> args(argv, argv + argc);
+        CLI::CArgumentParser     parser{args};
+        // WATCH(no upstream report yet): hyprutils' help table never wraps a
+        // description's last word, so one wider than 58 columns breaks the
+        // table's border (src/cli/ArgumentParser.cpp, wrap()). Keep these
+        // short until that's fixed. Check: a longer description lines up.
+        for (const auto& registered : {
+                 parser.registerBoolOption("toggle", "t", "Start or stop dictating into the focused text field"),
+                 parser.registerStringOption("config", "c", "Use this config instead of hyprdictate.conf"),
+                 parser.registerBoolOption("version", "V", "Show hyprdictate's version"),
+                 parser.registerBoolOption("help", "h", "Show this help"),
+             }) {
+            if (!registered) {
+                logger.log(Hyprutils::CLI::LOG_CRIT, "{}", registered.error());
+                return 1;
+            }
+        }
+
+        if (const auto PARSED = parser.parse(); !PARSED) {
+            logger.log(Hyprutils::CLI::LOG_ERR, "Failed parsing arguments: {}", PARSED.error());
+            return 1;
+        }
+
+        if (parser.getBool("help").value_or(false)) {
+            std::println("{}", parser.getDescription(std::format("hyprdictate v{}", HYPRDICTATE_VERSION)));
+            return 0;
+        }
+
+        if (parser.getBool("version").value_or(false)) {
+            std::println("hyprdictate v{}", HYPRDICTATE_VERSION);
+            return 0;
+        }
+
+        if (parser.getBool("toggle").value_or(false))
             return sendToggle();
 
-        CDaemon{{
-                    .model     = std::string{*model},
-                    .language  = std::string{parser.getString("language").value_or("")},
-                    .lookahead = parser.getInt("lookahead").value_or(-1),
-                }}
-            .run();
+        const auto CONFIG = parser.getString("config");
+        CDaemon{loadConfig(CONFIG ? std::optional<std::string>{*CONFIG} : std::nullopt)}.run();
     } catch (const std::exception& e) {
-        std::println(stderr, "{}", e.what());
+        logger.log(Hyprutils::CLI::LOG_CRIT, "{}", e.what());
+        return 1;
+    } catch (...) {
+        logger.log(Hyprutils::CLI::LOG_CRIT, "unknown error");
         return 1;
     }
 }

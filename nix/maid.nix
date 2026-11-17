@@ -1,5 +1,6 @@
-# nix-maid module: runs the daemon as a user service in the graphical session
-# and puts the hyprdictate CLI on PATH. Bind `hyprdictate --toggle` to a key.
+# nix-maid module: writes hyprdictate.conf and runs the package's user unit in
+# the graphical session; puts the hyprdictate CLI on PATH. Bind
+# `hyprdictate --toggle` to a key.
 {
   config,
   lib,
@@ -38,19 +39,21 @@ in
   config = lib.mkIf cfg.enable {
     packages = [ cfg.package ];
 
+    # The settings, where hyprdictate reads them (format: assets/example.conf).
+    file.xdg_config."hypr/hyprdictate.conf".text = ''
+      general {
+          model = ${cfg.model}
+          language = ${cfg.language}
+          lookahead = ${toString cfg.lookahead}
+      }
+    '';
+
+    # The package's own unit (systemd/hyprdictate.service.in), started with the
+    # graphical session and again when the settings change.
+    systemd.packages = [ cfg.package ];
     systemd.services.hyprdictate = {
-      description = "hyprdictate dictation input method";
       wantedBy = [ config.maid.systemdGraphicalTarget ];
-      partOf = [ config.maid.systemdGraphicalTarget ];
-      after = [
-        config.maid.systemdGraphicalTarget
-        "pipewire.service"
-      ];
-      serviceConfig = {
-        ExecStart = "${lib.getExe cfg.package} --model ${cfg.model} --language ${cfg.language} --lookahead ${toString cfg.lookahead}";
-        Restart = "on-failure";
-        RestartSec = 2;
-      };
+      restartTriggers = [ config.file.xdg_config."hypr/hyprdictate.conf".text ];
     };
   };
 }

@@ -20,8 +20,8 @@ class CAudio {
     CAudio(const CAudio&)            = delete;
     CAudio& operator=(const CAudio&) = delete;
 
-    bool        start();
-    void        stop();
+    bool    start();
+    void    stop();
 
     // PipeWire's process callback.
     static void onProcess(void* data);

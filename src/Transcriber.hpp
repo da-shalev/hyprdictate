@@ -44,15 +44,15 @@ class CTranscriber {
     void pushAudio(const float* samples, size_t count);
 
   private:
-    void                    run();
-    bool                    begin();
-    void                    feed(std::vector<float>& audio);
-    void                    finish(std::string error = {});
-    void                    publish(bool final, std::string error = {});
+    void                run();
+    bool                begin();
+    void                feed(std::vector<float>& audio);
+    void                finish(std::string error = {});
+    void                publish(bool final, std::string error = {});
 
-    SOptions                m_options;
-    UpdateFn                m_onUpdate;
-    transcribe_session*     m_session = nullptr;
+    SOptions            m_options;
+    UpdateFn            m_onUpdate;
+    transcribe_session* m_session = nullptr;
 
     // Shared with the worker.
     std::mutex              m_lock;
@@ -62,8 +62,8 @@ class CTranscriber {
     std::vector<float>      m_audio;
 
     // Worker only.
-    bool                    m_streaming = false;
-    size_t                  m_published = 0;
+    bool        m_streaming = false;
+    size_t      m_published = 0;
 
-    std::thread             m_thread;
+    std::thread m_thread;
 };

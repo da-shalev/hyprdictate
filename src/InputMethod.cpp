@@ -11,21 +11,20 @@
 
 using Hyprutils::Memory::makeShared;
 
-CInputMethod::CInputMethod() {
-    m_display = wl_display_connect(nullptr);
+CInputMethod::CInputMethod() : m_display(wl_display_connect(nullptr)) {
     if (!m_display)
         throw std::runtime_error("can't connect to the Wayland display");
 
     m_registry = makeShared<CCWlRegistry>(reinterpret_cast<wl_proxy*>(wl_display_get_registry(m_display)));
     m_registry->setGlobal([this](CCWlRegistry* registry, uint32_t name, const char* interface, uint32_t version) {
-        const auto bind = [&](const wl_interface* iface, uint32_t v) {
+        const auto BIND = [&](const wl_interface* iface, uint32_t v) {
             return static_cast<wl_proxy*>(wl_registry_bind(reinterpret_cast<wl_registry*>(registry->resource()), name, iface, v));
         };
         if (!m_seat && std::strcmp(interface, wl_seat_interface.name) == 0)
             // 5 for the release request its destructor sends.
-            m_seat = makeShared<CCWlSeat>(bind(&wl_seat_interface, std::min(version, 5u)));
+            m_seat = makeShared<CCWlSeat>(BIND(&wl_seat_interface, std::min(version, 5u)));
         else if (std::strcmp(interface, zwp_input_method_manager_v2_interface.name) == 0)
-            m_manager = makeShared<CCZwpInputMethodManagerV2>(bind(&zwp_input_method_manager_v2_interface, 1));
+            m_manager = makeShared<CCZwpInputMethodManagerV2>(BIND(&zwp_input_method_manager_v2_interface, 1));
     });
     wl_display_roundtrip(m_display);
 
@@ -80,12 +79,12 @@ bool CInputMethod::unavailable() const {
 void CInputMethod::begin() {
     // As FUTO Voice Input does: a space before the text when it would run
     // into the word before the cursor, and after it when a word follows.
-    const auto& text   = m_current.surrounding;
-    const auto  cursor = m_current.cursor;
-    const auto  letter = [](unsigned char c) { return c >= 0x80 || std::isalpha(c); };
+    const auto& TEXT   = m_current.surrounding;
+    const auto  CURSOR = m_current.cursor;
+    const auto  LETTER = [](unsigned char c) { return c >= 0x80 || std::isalpha(c); };
 
-    m_before = cursor > 0 && cursor <= text.size() && !std::isspace(static_cast<unsigned char>(text[cursor - 1])) ? " " : "";
-    m_after  = cursor < text.size() && letter(text[cursor]) ? " " : "";
+    m_before = CURSOR > 0 && CURSOR <= TEXT.size() && !std::isspace(static_cast<unsigned char>(TEXT[CURSOR - 1])) ? " " : "";
+    m_after  = CURSOR < TEXT.size() && LETTER(TEXT[CURSOR]) ? " " : "";
 }
 
 void CInputMethod::update(const std::string& committed, const std::string& tentative) {
@@ -104,7 +103,7 @@ void CInputMethod::send(const std::string& commit, const std::string& preedit) {
     if (!commit.empty())
         m_method->sendCommitString(commit.c_str());
     // Each commit replaces the preedit; an empty one clears it.
-    const int cursor = static_cast<int>(preedit.size());
-    m_method->sendSetPreeditString(preedit.c_str(), cursor, cursor);
+    const int CURSOR = static_cast<int>(preedit.size());
+    m_method->sendSetPreeditString(preedit.c_str(), CURSOR, CURSOR);
     m_method->sendCommit(m_serial);
 }

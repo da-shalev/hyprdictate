@@ -1,4 +1,4 @@
-# Pinned sources: `nvfetcher -o nix/_sources` rewrites nix/_sources.
+# Pinned sources: run `nvfetcher` in this directory to rewrite _sources.
 
 [transcribe-cpp]
 src.github = "handy-computer/transcribe.cpp"

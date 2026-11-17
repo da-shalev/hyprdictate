@@ -1,4 +1,6 @@
 {
+  description = "Streaming dictation into the focused text field, as a Wayland input method";
+
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 
   outputs =

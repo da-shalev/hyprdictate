@@ -58,7 +58,7 @@ maid.sharedModules = [ (import hyprdictate).maidModules.default ];
 hyprdictate = {
   enable = true;
   model = ./nemotron-3.5-asr-streaming-0.6b-Q8_0.gguf;
-  # also: package, language, lookahead
+  # also: package, language, latency
 };
 ```
 

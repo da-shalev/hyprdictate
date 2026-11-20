@@ -29,10 +29,10 @@ in
       default = "en-US";
     };
 
-    lookahead = lib.mkOption {
+    latency = lib.mkOption {
       type = lib.types.int;
-      default = 6;
-      description = "Encoder lookahead in 80 ms frames (0, 3, 6 or 13): lower is faster, higher more accurate.";
+      default = 480;
+      description = "How soon words appear after they are spoken, in milliseconds: lower is quicker, higher more accurate. -1 keeps the model's default.";
     };
   };
 
@@ -44,7 +44,7 @@ in
       general {
           model = ${cfg.model}
           language = ${cfg.language}
-          lookahead = ${toString cfg.lookahead}
+          latency = ${toString cfg.latency}
       }
     '';
 

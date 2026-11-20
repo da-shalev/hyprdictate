@@ -59,7 +59,7 @@ static CTranscriber::SOptions loadConfig(std::optional<std::string> path) {
     Hyprlang::CConfig config{path->c_str(), Hyprlang::SConfigOptions{.throwAllErrors = true}};
     config.addConfigValue("general:model", Hyprlang::STRING{""});
     config.addConfigValue("general:language", Hyprlang::STRING{""});
-    config.addConfigValue("general:lookahead", Hyprlang::INT{-1});
+    config.addConfigValue("general:latency", Hyprlang::INT{-1});
     config.commence();
     if (const auto RESULT = config.parse(); RESULT.error)
         throw std::runtime_error(std::format("Config has errors:\n{}", RESULT.getError()));
@@ -73,9 +73,9 @@ static CTranscriber::SOptions loadConfig(std::optional<std::string> path) {
         throw std::runtime_error(std::format("{}: model {}: {}", *path, MODEL, RESOLVED.error()));
 
     return {
-        .model     = *RESOLVED,
-        .language  = std::any_cast<Hyprlang::STRING>(config.getConfigValue("general:language")),
-        .lookahead = static_cast<int>(std::any_cast<Hyprlang::INT>(config.getConfigValue("general:lookahead"))),
+        .model    = *RESOLVED,
+        .language = std::any_cast<Hyprlang::STRING>(config.getConfigValue("general:language")),
+        .latency  = static_cast<int>(std::any_cast<Hyprlang::INT>(config.getConfigValue("general:latency"))),
     };
 }
 

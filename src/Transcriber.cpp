@@ -2,9 +2,12 @@
 
 #include <transcribe.h>
 #include <transcribe/parakeet.h>
+#include <transcribe/voxtral_realtime.h>
 #include <hyprutils/cli/Logger.hpp>
 
 #include <algorithm>
+#include <array>
+#include <cstdlib>
 #include <format>
 #include <stdexcept>
 #include <utility>
@@ -13,11 +16,36 @@
 // buffers up to its own chunk size.
 constexpr size_t   MIN_FEED_SAMPLES = 1600;
 
+// Streaming models count their latency in 80 ms steps.
+constexpr int      STEP_MS = 80;
+
 static std::string status(int s) {
     return transcribe_status_string(s);
 }
 
 static Hyprutils::CLI::CLogger logger;
+
+// Model families with a latency setting, each under its own name.
+enum class eFamily {
+    NONE,     // no latency setting (Moonshine)
+    NEMOTRON, // lookahead
+    PARAKEET, // a chunk and its lookahead (Parakeet Unified)
+    VOXTRAL,  // delay (Voxtral Realtime)
+};
+
+static eFamily family(const transcribe_model* model) {
+    const auto ACCEPTS = [model](uint32_t kind) { return transcribe_model_accepts_ext_kind(model, TRANSCRIBE_EXT_SLOT_STREAM, kind); };
+    if (ACCEPTS(TRANSCRIBE_EXT_KIND_PARAKEET_STREAM))
+        return eFamily::NEMOTRON;
+    if (ACCEPTS(TRANSCRIBE_EXT_KIND_PARAKEET_BUFFERED_STREAM))
+        return eFamily::PARAKEET;
+    if (ACCEPTS(TRANSCRIBE_EXT_KIND_VOXTRAL_REALTIME_STREAM))
+        return eFamily::VOXTRAL;
+    return eFamily::NONE;
+}
+
+// Parakeet Unified's trained (chunk, lookahead) pairs, in steps.
+constexpr std::array<std::pair<int, int>, 5> PARAKEET_PAIRS = {{{1, 1}, {2, 2}, {2, 4}, {7, 7}, {13, 13}}};
 
 CTranscriber::CTranscriber(const SOptions& options, UpdateFn onUpdate) : m_options(options), m_onUpdate(std::move(onUpdate)) {
     if (const auto RET = transcribe_init_backends_default(); RET != TRANSCRIBE_OK)
@@ -94,11 +122,32 @@ bool CTranscriber::begin() {
     transcribe_stream_params stream;
     transcribe_stream_params_init(&stream);
 
-    transcribe_parakeet_stream_ext lookahead;
-    transcribe_parakeet_stream_ext_init(&lookahead);
-    if (m_options.lookahead >= 0 && transcribe_model_accepts_ext_kind(transcribe_get_model(m_session), TRANSCRIBE_EXT_SLOT_STREAM, TRANSCRIBE_EXT_KIND_PARAKEET_STREAM)) {
-        lookahead.att_context_right = m_options.lookahead;
-        stream.family               = &lookahead.ext;
+    // The latency, as the model family's own setting.
+    transcribe_parakeet_stream_ext          nemotron;
+    transcribe_parakeet_buffered_stream_ext parakeet;
+    transcribe_voxtral_realtime_stream_ext  voxtral;
+    const int                               STEPS = (m_options.latency + STEP_MS / 2) / STEP_MS;
+    switch (m_options.latency < 0 ? eFamily::NONE : family(transcribe_get_model(m_session))) {
+        case eFamily::NONE: break;
+        case eFamily::NEMOTRON:
+            transcribe_parakeet_stream_ext_init(&nemotron);
+            nemotron.att_context_right = STEPS;
+            stream.family              = &nemotron.ext;
+            break;
+        case eFamily::PARAKEET: {
+            // The pair nearest the latency.
+            const auto [CHUNK, LOOKAHEAD] = std::ranges::min(PARAKEET_PAIRS, {}, [STEPS](const auto& p) { return std::abs(p.first + p.second - STEPS); });
+            transcribe_parakeet_buffered_stream_ext_init(&parakeet);
+            parakeet.chunk_ms = CHUNK * STEP_MS;
+            parakeet.right_ms = LOOKAHEAD * STEP_MS;
+            stream.family     = &parakeet.ext;
+            break;
+        }
+        case eFamily::VOXTRAL:
+            transcribe_voxtral_realtime_stream_ext_init(&voxtral);
+            voxtral.num_delay_tokens = STEPS;
+            stream.family            = &voxtral.ext;
+            break;
     }
 
     if (const auto RET = transcribe_stream_begin(m_session, &run, &stream); RET != TRANSCRIBE_OK) {

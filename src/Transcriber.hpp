@@ -16,9 +16,9 @@ class CTranscriber {
     struct SOptions {
         std::string model;
         std::string language;
-        // Encoder lookahead in 80 ms frames for cache-aware models; -1 keeps
-        // the model's default.
-        int lookahead = -1;
+        // How soon words appear after they're spoken, in milliseconds, set as
+        // each model family's own setting. -1 keeps the model's default.
+        int latency = -1;
     };
 
     struct SUpdate {
